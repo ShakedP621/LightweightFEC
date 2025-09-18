@@ -3,5 +3,5 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="LightweightFEC.vcxproj" />
+  <Project Path="libfec/libfec/libfec.vcxproj" />
 </Solution>
