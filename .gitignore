@@ -1,0 +1,44 @@
+﻿## Visual Studio
+.vs/
+*.vc.db
+*.VC.db
+*.opendb
+*.user
+*.suo
+*.ipch/
+*.pch
+*.pdb
+*.obj
+*.idb
+*.ilk
+*.log
+*.tlog
+*.cache
+*.tmp
+*.exe
+*.dll
+*.lib
+*.exp
+*.iobj
+*.ipdb
+
+## Build output
+[Bb]uild/
+[Dd]ebug*/
+[Rr]elease*/
+x64/
+x86/
+out/
+bin/
+obj/
+
+## CMake (not used, but ignore if someone experiments)
+CMakeFiles/
+CMakeCache.txt
+cmake-build-*/
+CMakeSettings.json
+
+## Others
+*.nlo
+*.nls
+*.csv~  # temp CSVs
