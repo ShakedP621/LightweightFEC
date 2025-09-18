@@ -1,90 +1,128 @@
+// libfec/src/transport/udp_asio.cpp
 #include <ltfec/transport/udp_asio.h>
-#include <boost/asio/ip/multicast.hpp>
+#include <ltfec/transport/ip.h>
+
+#include <boost/asio.hpp>
 #include <boost/system/error_code.hpp>
 
 namespace ltfec::transport::asio {
 
     namespace net = boost::asio;
-    using udp = net::ip::udp;
+    using udp = boost::asio::ip::udp;
 
-    static bool parse_ipv4_string(std::string_view s, net::ip::address_v4& out) {
-        // We already have a parser in ip.h; reuse it to validate.
-        ltfec::transport::Ipv4 tmp{};
-        if (!ltfec::transport::parse_ipv4(s, tmp)) return false;
-        unsigned v = (tmp.oct[0] << 24) | (tmp.oct[1] << 16) | (tmp.oct[2] << 8) | (tmp.oct[3] << 0);
-        out = net::ip::address_v4(v);
-        return true;
+    // NOTE: ip.h defines 'struct Ipv4' (lowercase v)
+    static boost::asio::ip::address_v4 to_address_v4(const ltfec::transport::Ipv4& a) {
+        boost::asio::ip::address_v4::bytes_type b{ { a.oct[0], a.oct[1], a.oct[2], a.oct[3] } };
+        return boost::asio::ip::address_v4(b);
     }
 
-    boost::system::error_code
-        UdpSender::open_and_configure(const Endpoint& dest, const std::string& mcast_if_ip) {
-        boost::system::error_code ec;
-        socket_.open(udp::v4(), ec);
-        if (ec) return ec;
+    std::error_code UdpSender::open_and_configure(const Endpoint& dest, const std::string& mcast_if) {
+        return open_and_configure(dest, mcast_if, std::nullopt, std::nullopt);
+    }
 
-        dest_ = to_boost_endpoint(dest);
+    std::error_code UdpSender::open_and_configure(const Endpoint& dest,
+        const std::string& mcast_if,
+        std::optional<int> mcast_ttl,
+        std::optional<bool> mcast_loopback)
+    {
+        boost::system::error_code bec;
 
-        // If destination is multicast, set outbound interface
-        if (ltfec::transport::ipv4_is_multicast(dest.addr)) {
-            net::ip::address_v4 ifaddr;
-            if (!parse_ipv4_string(mcast_if_ip, ifaddr)) {
-                ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
-                return ec;
-            }
-            socket_.set_option(net::ip::multicast::outbound_interface(ifaddr), ec);
-            if (ec) return ec;
-
-            // Optional: set TTL/hops if desired (default 1 is fine for local nets)
-            // socket_.set_option(net::ip::multicast::hops(1), ec);
+        if (socket_.is_open()) {
+            socket_.close(bec);
+            bec = {};
         }
 
-        return ec; // success = default-constructed
-    }
+        socket_.open(udp::v4(), bec);
+        if (bec) return std::error_code(bec.value(), std::generic_category());
 
-    boost::system::error_code
-        UdpSender::send(std::span<const std::byte> payload, std::size_t& bytes_sent) {
-        boost::system::error_code ec;
-        bytes_sent = socket_.send_to(net::buffer(payload.data(), payload.size()), dest_, 0, ec);
-        return ec;
-    }
+        const auto addr = to_address_v4(dest.addr);
+        dest_ep_ = udp::endpoint(addr, dest.port);
 
-    boost::system::error_code
-        UdpReceiver::open_and_bind(const Endpoint& listen, const std::string& mcast_if_ip) {
-        boost::system::error_code ec;
-        udp::endpoint lep = to_boost_endpoint(listen);
-
-        socket_.open(udp::v4(), ec);
-        if (ec) return ec;
-
-        // For multicast receive allow multiple sockets on same addr:port
-        socket_.set_option(net::ip::udp::socket::reuse_address(true), ec);
-        if (ec) return ec;
-
-        socket_.bind(lep, ec);
-        if (ec) return ec;
-
-        // If the listen addr is multicast, join the group on the specified interface.
-        if (ltfec::transport::ipv4_is_multicast(listen.addr)) {
-            net::ip::address_v4 grp(
-                (listen.addr.oct[0] << 24) | (listen.addr.oct[1] << 16) |
-                (listen.addr.oct[2] << 8) | (listen.addr.oct[3] << 0));
-            net::ip::address_v4 ifaddr;
-            if (!parse_ipv4_string(mcast_if_ip, ifaddr)) {
-                ec = boost::system::errc::make_error_code(boost::system::errc::invalid_argument);
-                return ec;
+        const bool is_mcast = addr.is_multicast();
+        if (is_mcast) {
+            // Multicast requires interface
+            if (mcast_if.empty()) {
+                return std::make_error_code(std::errc::invalid_argument);
             }
-            // Join specific group on specific interface.
-            socket_.set_option(net::ip::multicast::join_group(grp, ifaddr), ec);
-            if (ec) return ec;
+            boost::system::error_code tmp;
+
+            // Outbound interface
+            const auto ifaddr = boost::asio::ip::make_address_v4(mcast_if, tmp);
+            if (tmp) return std::error_code(tmp.value(), std::generic_category());
+            socket_.set_option(boost::asio::ip::multicast::outbound_interface(ifaddr), tmp);
+            if (tmp) return std::error_code(tmp.value(), std::generic_category());
+
+            // TTL (hops)
+            if (mcast_ttl.has_value()) {
+                int ttl = *mcast_ttl;
+                if (ttl < 0) ttl = 0;
+                if (ttl > 255) ttl = 255;
+                socket_.set_option(boost::asio::ip::multicast::hops(static_cast<int>(ttl)), tmp);
+                if (tmp) return std::error_code(tmp.value(), std::generic_category());
+            }
+
+            // Loopback enable/disable
+            if (mcast_loopback.has_value()) {
+                socket_.set_option(boost::asio::ip::multicast::enable_loopback(*mcast_loopback), tmp);
+                if (tmp) return std::error_code(tmp.value(), std::generic_category());
+            }
         }
-        return ec;
+
+        return {};
     }
 
-    boost::system::error_code
-        UdpReceiver::recv_once(std::span<std::byte> buffer, std::size_t& bytes_recv, udp::endpoint& sender) {
-        boost::system::error_code ec;
-        bytes_recv = socket_.receive_from(net::buffer(buffer.data(), buffer.size()), sender, 0, ec);
-        return ec;
+    std::error_code UdpSender::send(std::span<const std::byte> buf, std::size_t& sent) {
+        boost::system::error_code bec;
+        const auto n = socket_.send_to(net::buffer(buf.data(), buf.size()), dest_ep_, 0, bec);
+        sent = static_cast<std::size_t>(n);
+        if (bec) return std::error_code(bec.value(), std::generic_category());
+        return {};
+    }
+
+    std::error_code UdpReceiver::open_and_bind(const Endpoint& listen_ep, const std::string& mcast_if) {
+        boost::system::error_code bec;
+
+        if (socket_.is_open()) {
+            socket_.close(bec);
+            bec = {};
+        }
+
+        socket_.open(udp::v4(), bec);
+        if (bec) return std::error_code(bec.value(), std::generic_category());
+
+        socket_.set_option(net::socket_base::reuse_address(true), bec);
+        if (bec) return std::error_code(bec.value(), std::generic_category());
+
+        const auto laddr = to_address_v4(listen_ep.addr);
+        const bool is_mcast = laddr.is_multicast();
+
+        // Bind: for multicast, bind to ANY on the port; for unicast, bind to the specific address
+        udp::endpoint bind_ep(is_mcast ? udp::endpoint(udp::v4(), listen_ep.port)
+            : udp::endpoint(laddr, listen_ep.port));
+        socket_.bind(bind_ep, bec);
+        if (bec) return std::error_code(bec.value(), std::generic_category());
+
+        if (is_mcast) {
+            if (mcast_if.empty()) {
+                return std::make_error_code(std::errc::invalid_argument);
+            }
+            boost::system::error_code tmp;
+            const auto group = laddr;
+            const auto iface = boost::asio::ip::make_address_v4(mcast_if, tmp);
+            if (tmp) return std::error_code(tmp.value(), std::generic_category());
+            socket_.set_option(boost::asio::ip::multicast::join_group(group, iface), tmp);
+            if (tmp) return std::error_code(tmp.value(), std::generic_category());
+        }
+
+        return {};
+    }
+
+    std::error_code UdpReceiver::recv_once(std::span<std::byte> buf, std::size_t& n, udp::endpoint& sender) {
+        boost::system::error_code bec;
+        const auto c = socket_.receive_from(net::buffer(buf.data(), buf.size()), sender, 0, bec);
+        n = static_cast<std::size_t>(c);
+        if (bec) return std::error_code(bec.value(), std::generic_category());
+        return {};
     }
 
 } // namespace ltfec::transport::asio
