@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    env:
+      # Keep tests in quick mode by default (FULL only in dedicated job or with manual env override)
+      LTFEC_FULL_TESTS: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Prepare Boost headers and Boost.props
+        shell: pwsh
+        run: |
+          # Create folders
+          New-Item -ItemType Directory -Force C:\external | Out-Null
+          New-Item -ItemType Directory -Force C:\dev | Out-Null
+
+          # Download Boost (source zip; headers only needed for now)
+          $BoostZip = "C:\external\boost.zip"
+          $BoostUrl = "https://archives.boost.io/release/1.86.0/source/boost_1_86_0.zip"
+          Invoke-WebRequest -Uri $BoostUrl -OutFile $BoostZip
+
+          # Extract to C:\external\boost
+          New-Item -ItemType Directory -Force C:\external\boost | Out-Null
+          Expand-Archive -Path $BoostZip -DestinationPath C:\external\boost -Force
+
+          # Find extracted folder (e.g., boost_1_86_0)
+          $boostDir = Get-ChildItem -Directory C:\external\boost | Where-Object { $_.Name -like "boost_*" } | Select-Object -First 1
+          if (-not $boostDir) { throw "Boost folder not found after extraction." }
+
+          # Synthesize C:\dev\Boost.props expected by the projects (attached via Property Manager)
+          @"
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$($boostDir.FullName);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <!-- No Boost libs required yet; header-only Boost.Test runner in use -->
+    </Link>
+  </ItemDefinitionGroup>
+</Project>
+"@ | Set-Content -Encoding UTF8 C:\dev\Boost.props
+
+      - name: Build (Debug x64)
+        shell: pwsh
+        run: |
+          msbuild .\LightweightFEC.sln /t:Restore,Build /p:Configuration=Debug /p:Platform=x64 /m
+
+      - name: Run tests (Debug x64, quick mode)
+        shell: pwsh
+        run: |
+          $testExe = Join-Path $pwd "x64\Debug\tests.exe"
+          if (-not (Test-Path $testExe)) { throw "Test binary not found: $testExe" }
+          & $testExe
