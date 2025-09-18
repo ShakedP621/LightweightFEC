@@ -6,4 +6,5 @@
   <Project Path="apps/f/fec_sender/fec_sender.vcxproj" />
   <Project Path="apps/fec_receiver/fec_receiver.vcxproj" />
   <Project Path="libfec/libfec.vcxproj" />
+  <Project Path="tests/tests.vcxproj" />
 </Solution>
