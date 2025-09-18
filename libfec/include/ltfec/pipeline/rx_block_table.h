@@ -5,9 +5,12 @@
 #include <unordered_map>
 #include <optional>
 #include <span>
+#include <algorithm>
+
 #include <ltfec/pipeline/policy.h>
 #include <ltfec/pipeline/block_state.h>
 #include <ltfec/pipeline/block_tracker.h>
+#include <ltfec/fec_core/block_xor.h>
 #include <ltfec/protocol/frame.h>
 
 namespace ltfec::pipeline {
@@ -28,6 +31,15 @@ namespace ltfec::pipeline {
         std::uint16_t payload_len{ 0 };
     };
 
+    // Finalized/closed block result (data payloads in arrival order 0..N-1).
+    struct RxClosedBlock {
+        std::uint32_t gen{ 0 };
+        std::uint16_t N{ 0 }, K{ 0 };
+        std::uint16_t payload_len{ 0 };
+        std::vector<std::vector<std::byte>> data;   // size N, each payload_len bytes
+        std::vector<bool> was_recovered;            // size N, true if payload was reconstructed
+    };
+
     // Internal per-generation state.
     class RxBlock {
     public:
@@ -43,7 +55,6 @@ namespace ltfec::pipeline {
         }
 
         // Store one frame (copy payload) and update trackers.
-        // Inputs are trusted to be consistent with constructor N/K/payload_len.
         void ingest(std::uint64_t now_ms,
             bool is_parity,
             std::uint16_t seq_in_block,
@@ -84,6 +95,53 @@ namespace ltfec::pipeline {
         std::uint32_t gen() const noexcept { return gen_; }
         std::uint16_t payload_len() const noexcept { return payload_len_; }
 
+        // Build the closed-block result (perform XOR single-erasure recovery for K=1 if possible).
+        RxClosedBlock extract_closed() const {
+            RxClosedBlock out;
+            out.gen = gen_;
+            out.N = policy_.N;
+            out.K = policy_.K;
+            out.payload_len = payload_len_;
+            out.data.resize(policy_.N);
+            out.was_recovered.assign(policy_.N, false);
+
+            // Copy present data payloads
+            for (std::uint16_t i = 0; i < policy_.N; ++i) {
+                out.data[i] = data_[i]; // may be empty if missing
+            }
+
+            // K=1: attempt single erasure recovery when exactly one is missing and parity[0] exists.
+            if (policy_.K == 1 && state_.recoverable_k1() && parity_.size() >= 1 &&
+                parity_[0].size() == payload_len_)
+            {
+                // Build pointer arrays for block_xor_recover_one
+                std::vector<const std::byte*> ptrs(policy_.N, nullptr);
+                int missing = -1;
+                for (std::uint16_t i = 0; i < policy_.N; ++i) {
+                    if (data_[i].size() == payload_len_) ptrs[i] = data_[i].data();
+                    else {
+                        if (missing != -1) { missing = -1; break; }
+                        missing = static_cast<int>(i);
+                    }
+                }
+
+                if (missing >= 0) {
+                    std::vector<std::byte> rec(payload_len_);
+                    const int idx = ltfec::fec_core::block_xor_recover_one(
+                        std::span<const std::byte* const>(ptrs.data(), ptrs.size()),
+                        payload_len_,
+                        std::span<const std::byte>(parity_[0].data(), parity_[0].size()),
+                        std::span<std::byte>(rec.data(), rec.size()));
+                    if (idx == missing) {
+                        out.data[static_cast<std::size_t>(idx)] = std::move(rec);
+                        out.was_recovered[static_cast<std::size_t>(idx)] = true;
+                    }
+                }
+            }
+
+            return out;
+        }
+
     private:
         std::uint32_t gen_{ 0 };
         BlockPolicy policy_;
@@ -103,7 +161,6 @@ namespace ltfec::pipeline {
         explicit RxBlockTable(RxConfig cfg) : cfg_(cfg) {}
 
         // Ingest a decoded frame; creates the block if needed.
-        // Returns false if rejected due to shape mismatch (payload len or N/K).
         bool ingest(std::uint64_t now_ms,
             const ltfec::protocol::BaseHeader& h,
             bool has_parity_sub,
@@ -116,17 +173,14 @@ namespace ltfec::pipeline {
 
             auto it = blocks_.find(key);
             if (it == blocks_.end()) {
-                // Create new block with shape from the header.
                 RxBlock blk(key, h.data_count, h.parity_count, static_cast<std::uint16_t>(payload.size()), cfg_);
                 auto [ins_it, ok] = blocks_.emplace(key, std::move(blk));
                 it = ins_it;
             }
             else {
-                // Validate shape consistency
                 if (it->second.payload_len() != payload.size()) return false;
             }
 
-            // Parity or data?
             if (has_parity_sub) {
                 it->second.ingest(now_ms, /*is_parity*/true, /*seq*/0, ps.fec_parity_index, payload);
             }
@@ -140,6 +194,16 @@ namespace ltfec::pipeline {
             auto it = blocks_.find(gen);
             if (it == blocks_.end()) return false;
             return it->second.should_close(now_ms);
+        }
+
+        // If the block is ready to close, extract it (with recovery where possible) and erase from table.
+        bool close_if_ready(std::uint32_t gen, std::uint64_t now_ms, RxClosedBlock& out) {
+            auto it = blocks_.find(gen);
+            if (it == blocks_.end()) return false;
+            if (!it->second.should_close(now_ms)) return false;
+            out = it->second.extract_closed();
+            blocks_.erase(it);
+            return true;
         }
 
         std::optional<RxSnapshot> snapshot(std::uint32_t gen) const {
