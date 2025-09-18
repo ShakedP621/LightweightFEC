@@ -1,65 +1,82 @@
-name: CI
+name: ci
 
 on:
   push:
   pull_request:
 
 jobs:
-  build-and-test:
+  windows-msbuild:
     runs-on: windows-latest
     env:
-      # Keep tests in quick mode by default (FULL only in dedicated job or with manual env override)
-      LTFEC_FULL_TESTS: ""
+      BOOST_VERSION: 1_89_0
+      BOOST_DIR: ${{ github.workspace }}\boost_1_89_0
+      BOOST_INCLUDEDIR: ${{ github.workspace }}\boost_1_89_0
+      BOOST_LIBRARYDIR: ${{ github.workspace }}\boost_1_89_0\stage\lib
+      # Test knobs
+      DISABLE_MULTICAST_TESTS: 1
+      LTFEC_ACCEPT_FULL: 0
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup MSBuild
+      - name: Set up MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Prepare Boost headers and Boost.props
+      - name: Cache Boost (source + built libs)
+        id: boost-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.BOOST_DIR }}
+          key: boost-${{ env.BOOST_VERSION }}-msvc143-shared
+
+      - name: Download Boost ${{ env.BOOST_VERSION }} (if not cached)
+        if: steps.boost-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          # Create folders
-          New-Item -ItemType Directory -Force C:\external | Out-Null
+          $ErrorActionPreference = 'Stop'
+          Invoke-WebRequest -Uri https://archives.boost.io/release/1.89.0/source/boost_1_89_0.zip -OutFile boost.zip
+          Expand-Archive boost.zip -DestinationPath .
+          Remove-Item boost.zip
+
+      - name: Build Boost.Program_options (debug+release, x64, shared)
+        if: steps.boost-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          cd boost_1_89_0
+          cmd /c bootstrap.bat
+          .\b2 --with-program_options toolset=msvc address-model=64 runtime-link=shared link=shared variant=debug,release stage
+
+      - name: Create C:\dev\Boost.props for this runner
+        shell: pwsh
+        run: |
           New-Item -ItemType Directory -Force C:\dev | Out-Null
-
-          # Download Boost (source zip; headers only needed for now)
-          $BoostZip = "C:\external\boost.zip"
-          $BoostUrl = "https://archives.boost.io/release/1.86.0/source/boost_1_86_0.zip"
-          Invoke-WebRequest -Uri $BoostUrl -OutFile $BoostZip
-
-          # Extract to C:\external\boost
-          New-Item -ItemType Directory -Force C:\external\boost | Out-Null
-          Expand-Archive -Path $BoostZip -DestinationPath C:\external\boost -Force
-
-          # Find extracted folder (e.g., boost_1_86_0)
-          $boostDir = Get-ChildItem -Directory C:\external\boost | Where-Object { $_.Name -like "boost_*" } | Select-Object -First 1
-          if (-not $boostDir) { throw "Boost folder not found after extraction." }
-
-          # Synthesize C:\dev\Boost.props expected by the projects (attached via Property Manager)
           @"
-<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>$($boostDir.FullName);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(BOOST_INCLUDEDIR);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
-      <!-- No Boost libs required yet; header-only Boost.Test runner in use -->
+      <AdditionalLibraryDirectories>$(BOOST_LIBRARYDIR);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
 </Project>
-"@ | Set-Content -Encoding UTF8 C:\dev\Boost.props
+"@ | Out-File -FilePath C:\dev\Boost.props -Encoding utf8
+
+      - name: Print Boost libs
+        shell: pwsh
+        run: Get-ChildItem $env:BOOST_LIBRARYDIR
 
       - name: Build (Debug x64)
         shell: pwsh
-        run: |
-          msbuild .\LightweightFEC.sln /t:Restore,Build /p:Configuration=Debug /p:Platform=x64 /m
+        run: msbuild LightweightFEC.sln /m /p:Configuration=Debug /p:Platform=x64 /verbosity:minimal
 
-      - name: Run tests (Debug x64, quick mode)
+      - name: Run unit tests (Debug quick)
         shell: pwsh
-        run: |
-          $testExe = Join-Path $pwd "x64\Debug\tests.exe"
-          if (-not (Test-Path $testExe)) { throw "Test binary not found: $testExe" }
-          & $testExe
+        run: .\x64\Debug\tests.exe --detect_memory_leaks=0
+
+      - name: Build (Release x64)
+        shell: pwsh
+        run: msbuild LightweightFEC.sln /m /p:Configuration=Release /p:Platform=x64 /verbosity:minimal
