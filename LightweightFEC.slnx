@@ -3,5 +3,6 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="libfec/libfec/libfec.vcxproj" />
+  <Project Path="apps/f/fec_sender/fec_sender.vcxproj" />
+  <Project Path="libfec/libfec.vcxproj" />
 </Solution>
