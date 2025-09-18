@@ -155,13 +155,23 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="fec_core\gf256.h" />
+    <ClInclude Include="fec_core\xor_parity.h" />
+    <ClInclude Include="include\ltfec\util\crc32c.h" />
     <ClInclude Include="include\ltfec\version.h" />
+    <ClInclude Include="metrics\csv.h" />
+    <ClInclude Include="pipeline\block.h" />
+    <ClInclude Include="protocol\frame.h" />
+    <ClInclude Include="protocol\ids.h" />
+    <ClInclude Include="sim\model.h" />
+    <ClInclude Include="transport\udp.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="libfec.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="src\util\crc32c.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
