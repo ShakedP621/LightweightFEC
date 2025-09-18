@@ -2,17 +2,10 @@
 #include <cstdint>
 #include <vector>
 #include <algorithm>
+#include <ltfec/pipeline/policy.h>
 
 namespace ltfec::pipeline {
 
-    struct BlockPolicy {
-        std::uint16_t N{ 8 };
-        std::uint16_t K{ 1 };
-        std::uint32_t reorder_ms{ 50 };
-        std::uint32_t fps{ 30 };
-    };
-
-    // Tracks which frames of a single block have arrived (data/parity).
     class BlockState {
     public:
         explicit BlockState(BlockPolicy p) : policy_(p), data_seen_(p.N, false), parity_seen_(p.K, false) {}
@@ -23,7 +16,6 @@ namespace ltfec::pipeline {
             parity_seen_.assign(p.K, false);
         }
 
-        // Mark arrivals
         void mark_data(std::uint16_t seq_in_block) {
             if (seq_in_block < policy_.N) data_seen_[seq_in_block] = true;
         }
@@ -31,7 +23,6 @@ namespace ltfec::pipeline {
             if (parity_index < policy_.K) parity_seen_[parity_index] = true;
         }
 
-        // Queries
         std::uint16_t data_seen_count() const {
             return static_cast<std::uint16_t>(std::count(data_seen_.begin(), data_seen_.end(), true));
         }
@@ -45,17 +36,15 @@ namespace ltfec::pipeline {
         bool have_any_parity() const { return parity_seen_count() > 0; }
         bool have_all_parity() const { return parity_seen_count() == policy_.K; }
 
-        // For K=1 baseline XOR, exactly one missing data and at least one parity enables single erasure recovery.
         bool recoverable_k1() const {
             return policy_.K == 1 && data_missing_count() == 1 && have_any_parity();
         }
 
-        // Returns the first missing data index [0..N-1], or -1 if none or >1 missing and you need more logic.
         int first_missing_data() const {
             int idx = -1;
             for (std::uint16_t i = 0; i < policy_.N; ++i) {
                 if (!data_seen_[i]) {
-                    if (idx != -1) return -1; // more than one missing
+                    if (idx != -1) return -1;
                     idx = i;
                 }
             }
