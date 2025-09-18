@@ -148,8 +148,14 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="crc32c_tests.cpp" />
+    <ClCompile Include="endian_tests.cpp" />
+    <ClCompile Include="frame_builder_tests.cpp" />
+    <ClCompile Include="frame_io_tests.cpp" />
     <ClCompile Include="headers_compile_tests.cpp" />
+    <ClCompile Include="ip_tests.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="metrics_csv_tests.cpp" />
+    <ClCompile Include="xor_parity_tests.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -6,8 +6,8 @@
   <Folder Name="/Solution Items/">
     <File Path="props/Common.props" />
   </Folder>
-  <Project Path="apps/f/fec_sender/fec_sender.vcxproj" />
-  <Project Path="apps/fec_receiver/fec_receiver.vcxproj" />
-  <Project Path="libfec/libfec.vcxproj" />
-  <Project Path="tests/tests.vcxproj" />
+  <Project Path="apps/f/fec_sender/fec_sender.vcxproj" Id="9ae5d673-0cd7-4d1e-b846-7f7cac6a9202" />
+  <Project Path="apps/fec_receiver/fec_receiver.vcxproj" Id="838347a7-fe7c-4dd4-8013-5ff886b513dd" />
+  <Project Path="libfec/libfec.vcxproj" Id="1af1c57d-b6fa-4132-9893-02a0f30424c4" />
+  <Project Path="tests/tests.vcxproj" Id="63043169-0e38-46f1-85a3-270eadf6c0f2" />
 </Solution>

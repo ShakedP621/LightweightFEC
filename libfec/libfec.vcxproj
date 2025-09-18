@@ -155,9 +155,15 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="csv.h" />
     <ClInclude Include="fec_core\gf256.h" />
     <ClInclude Include="fec_core\xor_parity.h" />
+    <ClInclude Include="frame_io.h" />
+    <ClInclude Include="include\ltfec\protocol\frame_builder.h" />
+    <ClInclude Include="include\ltfec\transport\ip.h" />
+    <ClInclude Include="include\ltfec\transport\udp_asio.h" />
     <ClInclude Include="include\ltfec\util\crc32c.h" />
+    <ClInclude Include="include\ltfec\util\endian.h" />
     <ClInclude Include="include\ltfec\version.h" />
     <ClInclude Include="metrics\csv.h" />
     <ClInclude Include="pipeline\block.h" />
@@ -171,6 +177,9 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="src\fec_core\xor_parity.cpp" />
+    <ClCompile Include="src\metrics\csv.cpp" />
+    <ClCompile Include="src\transport\udp_asio.cpp" />
     <ClCompile Include="src\util\crc32c.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
