@@ -42,3 +42,7 @@ CMakeSettings.json
 *.nlo
 *.nls
 *.csv~  # temp CSVs
+
+# Ignore runtime metrics CSV folders
+metrics/**
+apps/*/metrics/**
