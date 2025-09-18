@@ -3,6 +3,9 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
+  <Folder Name="/Solution Items/">
+    <File Path="props/Common.props" />
+  </Folder>
   <Project Path="apps/f/fec_sender/fec_sender.vcxproj" />
   <Project Path="apps/fec_receiver/fec_receiver.vcxproj" />
   <Project Path="libfec/libfec.vcxproj" />
