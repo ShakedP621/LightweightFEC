@@ -113,13 +113,14 @@
       <PreprocessorDefinitions>NOMINMAX;WIN32_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
       <AdditionalIncludeDirectories>C:\dev\LightweightFEC\libfec\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>ws2_32.lib;mswsock.lib;iphlpapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <IgnoreAllDefaultLibraries>false</IgnoreAllDefaultLibraries>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -147,14 +148,26 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="acceptance_tests.cpp" />
+    <ClCompile Include="block_state_tests.cpp" />
+    <ClCompile Include="block_tracker_tests.cpp" />
+    <ClCompile Include="block_xor_tests.cpp" />
     <ClCompile Include="crc32c_tests.cpp" />
     <ClCompile Include="endian_tests.cpp" />
+    <ClCompile Include="fec_encoder_tests.cpp" />
     <ClCompile Include="frame_builder_tests.cpp" />
     <ClCompile Include="frame_io_tests.cpp" />
+    <ClCompile Include="gf256_tests.cpp" />
     <ClCompile Include="headers_compile_tests.cpp" />
     <ClCompile Include="ip_tests.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="metrics_csv_tests.cpp" />
+    <ClCompile Include="rx_block_table_tests.cpp" />
+    <ClCompile Include="rx_recover_gf256_tests.cpp" />
+    <ClCompile Include="rx_recover_k1_tests.cpp" />
+    <ClCompile Include="sim_e2e_tests.cpp" />
+    <ClCompile Include="sim_tests.cpp" />
+    <ClCompile Include="tx_block_assembler_tests.cpp" />
     <ClCompile Include="xor_parity_tests.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

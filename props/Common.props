@@ -6,23 +6,42 @@
       <!-- C++ language & conformance -->
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ConformanceMode>true</ConformanceMode>
-
       <!-- Warnings -->
       <WarningLevel>Level4</WarningLevel>
       <!-- Treat warnings as errors in Release -->
       <TreatWarningAsError Condition="'$(Configuration)'=='Release'">true</TreatWarningAsError>
-
       <!-- Runtime -->
-      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
-
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
       <!-- Preprocessor -->
-      <PreprocessorDefinitions>NOMINMAX;WIN32_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-
+      <PreprocessorDefinitions>NOMINMAX;WIN32_LEAN_AND_MEAN;_WIN32_WINNT=0x0A00;WINVER=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <!-- Optional: CI fallback include path for Boost if BOOST_INCLUDEDIR is set -->
       <AdditionalIncludeDirectories>$(BOOST_INCLUDEDIR);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-
       <!-- QoL -->
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
   </ItemDefinitionGroup>
+	<!-- Debug|x64 settings -->
+	<ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+		<ClCompile>
+			<!-- Use Debug CRT to match Boost *-gd-* libs -->
+			<RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+			<!-- /MDd -->
+			<!-- Enable checked iterators in Debug (matches Boost's debug libs) -->
+			<IteratorDebugLevel>2</IteratorDebugLevel>
+			<!-- Target Windows 10 to silence Asio's _WIN32_WINNT warning -->
+			<PreprocessorDefinitions>_DEBUG;_WIN32_WINNT=0x0A00;WINVER=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+		</ClCompile>
+	</ItemDefinitionGroup>
+
+	<!-- Release|x64 settings -->
+	<ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+		<ClCompile>
+			<RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+			<!-- /MD -->
+			<IteratorDebugLevel>0</IteratorDebugLevel>
+			<PreprocessorDefinitions>NDEBUG;_WIN32_WINNT=0x0A00;WINVER=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+			<TreatWarningAsError>true</TreatWarningAsError>
+			<!-- keep /WX in Release -->
+		</ClCompile>
+	</ItemDefinitionGroup>
 </Project>

@@ -37,6 +37,10 @@ namespace ltfec::metrics {
         int schema_version() const noexcept { return schema_version_; }
         const std::string& run_uuid() const noexcept { return run_uuid_; }
 
+        // Save CSV buffer to a file path (UTF-8). Overwrites existing file.
+        // Returns true on success.
+        bool save_to_file(const std::string& filepath) const;
+
     private:
         static void append_field_csv(std::string& out, std::string_view field);
         static void append_row_csv(std::string& out, const std::vector<std::string>& fields);

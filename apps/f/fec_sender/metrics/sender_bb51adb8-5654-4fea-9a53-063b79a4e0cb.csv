@@ -1,0 +1,4 @@
+schema_version,run_uuid,ts_ms,app,event,ip,port,bytes
+1,bb51adb8-5654-4fea-9a53-063b79a4e0cb,108678410,sender,start,127.0.0.1,5555,0
+1,bb51adb8-5654-4fea-9a53-063b79a4e0cb,108678412,sender,sent,127.0.0.1:5555,5555,2
+# summary,1,bb51adb8-5654-4fea-9a53-063b79a4e0cb,ok

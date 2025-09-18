@@ -1,5 +1,6 @@
 #include <ltfec/metrics/csv.h>
 #include <stdexcept>
+#include <fstream>
 
 namespace ltfec::metrics {
 
@@ -76,4 +77,10 @@ namespace ltfec::metrics {
         append_row_csv(buf_, row);
     }
 
+    bool CsvWriter::save_to_file(const std::string& filepath) const {
+        std::ofstream os(filepath, std::ios::binary | std::ios::trunc);
+        if (!os) return false;
+        os.write(buf_.data(), static_cast<std::streamsize>(buf_.size()));
+        return static_cast<bool>(os);
+    }
 } // namespace ltfec::metrics

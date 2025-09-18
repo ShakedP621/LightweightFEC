@@ -6,7 +6,7 @@
 #include <optional>
 #include <span>
 #include <algorithm>
-
+#include <ltfec/fec_core/gf256_decode.h>
 #include <ltfec/pipeline/policy.h>
 #include <ltfec/pipeline/block_state.h>
 #include <ltfec/pipeline/block_tracker.h>
@@ -110,11 +110,10 @@ namespace ltfec::pipeline {
                 out.data[i] = data_[i]; // may be empty if missing
             }
 
-            // K=1: attempt single erasure recovery when exactly one is missing and parity[0] exists.
+            // --- K=1 XOR recovery (existing path) ---
             if (policy_.K == 1 && state_.recoverable_k1() && parity_.size() >= 1 &&
                 parity_[0].size() == payload_len_)
             {
-                // Build pointer arrays for block_xor_recover_one
                 std::vector<const std::byte*> ptrs(policy_.N, nullptr);
                 int missing = -1;
                 for (std::uint16_t i = 0; i < policy_.N; ++i) {
@@ -124,7 +123,6 @@ namespace ltfec::pipeline {
                         missing = static_cast<int>(i);
                     }
                 }
-
                 if (missing >= 0) {
                     std::vector<std::byte> rec(payload_len_);
                     const int idx = ltfec::fec_core::block_xor_recover_one(
@@ -137,10 +135,50 @@ namespace ltfec::pipeline {
                         out.was_recovered[static_cast<std::size_t>(idx)] = true;
                     }
                 }
+                return out;
+            }
+
+            // --- K >= 2 GF(256) recovery: recover up to K missing if enough parity rows arrived ---
+            if (policy_.K >= 2) {
+                // Gather missing indices
+                std::vector<std::uint16_t> miss;
+                for (std::uint16_t i = 0; i < policy_.N; ++i) {
+                    if (data_[i].size() != payload_len_) miss.push_back(i);
+                }
+                if (!miss.empty() && miss.size() <= policy_.K) {
+                    // Prepare pointers
+                    std::vector<const std::byte*> data_ptrs(policy_.N, nullptr);
+                    for (std::uint16_t i = 0; i < policy_.N; ++i) {
+                        if (data_[i].size() == payload_len_) data_ptrs[i] = data_[i].data();
+                    }
+                    std::vector<const std::byte*> parity_ptrs(policy_.K, nullptr);
+                    for (std::uint16_t j = 0; j < policy_.K; ++j) {
+                        if (parity_[j].size() == payload_len_) parity_ptrs[j] = parity_[j].data();
+                    }
+                    std::vector<std::vector<std::byte>> recs(miss.size(), std::vector<std::byte>(payload_len_));
+                    std::vector<std::byte*> out_ptrs(miss.size());
+                    for (std::size_t i = 0; i < miss.size(); ++i) out_ptrs[i] = recs[i].data();
+
+                    if (ltfec::fec_core::gf256_recover_erasures_vandermonde(
+                        std::span<const std::byte* const>(data_ptrs.data(), data_ptrs.size()),
+                        std::span<const std::byte* const>(parity_ptrs.data(), parity_ptrs.size()),
+                        payload_len_,
+                        std::span<const std::uint16_t>(miss.data(), miss.size()),
+                        std::span<std::byte*>(out_ptrs.data(), out_ptrs.size())))
+                    {
+                        // Success: move recovered payloads into outputs
+                        for (std::size_t k = 0; k < miss.size(); ++k) {
+                            const auto idx = static_cast<std::size_t>(miss[k]);
+                            out.data[idx] = std::move(recs[k]);
+                            out.was_recovered[idx] = true;
+                        }
+                    }
+                }
             }
 
             return out;
         }
+
 
     private:
         std::uint32_t gen_{ 0 };

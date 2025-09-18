@@ -62,22 +62,15 @@
     <Import Project="$(SolutionDir)..\Boost.props" Condition="Exists('$(SolutionDir)..\Boost.props')" />
     <Import Project="..\props\Common.props" />
   </ImportGroup>
-  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="$(SolutionDir)..\Boost.props" Condition="Exists('$(SolutionDir)..\Boost.props')" />
-    <Import Project="..\props\Common.props" />
-  </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="$(SolutionDir)..\Boost.props" Condition="Exists('$(SolutionDir)..\Boost.props')" />
-    <Import Project="$(SolutionDir)..\Boost.props" Condition="Exists('$(SolutionDir)..\Boost.props')" />
     <Import Project="..\props\Common.props" />
+    <Import Project="..\..\Boost.props" />
   </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
-    <Import Project="$(SolutionDir)..\Boost.props" Condition="Exists('$(SolutionDir)..\Boost.props')" />
-    <Import Project="$(SolutionDir)..\Boost.props" Condition="Exists('$(SolutionDir)..\Boost.props')" />
     <Import Project="..\props\Common.props" />
+    <Import Project="..\..\Boost.props" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -155,17 +148,28 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="csv.h" />
     <ClInclude Include="fec_core\gf256.h" />
     <ClInclude Include="fec_core\xor_parity.h" />
     <ClInclude Include="frame_io.h" />
+    <ClInclude Include="include\ltfec\fec_core\block_xor.h" />
+    <ClInclude Include="include\ltfec\fec_core\gf256_decode.h" />
+    <ClInclude Include="include\ltfec\metrics\csv.h" />
+    <ClInclude Include="include\ltfec\metrics\schema.h" />
+    <ClInclude Include="include\ltfec\pipeline\block_state.h" />
+    <ClInclude Include="include\ltfec\pipeline\block_tracker.h" />
+    <ClInclude Include="include\ltfec\pipeline\fec_encoder.h" />
+    <ClInclude Include="include\ltfec\pipeline\policy.h" />
+    <ClInclude Include="include\ltfec\pipeline\rx_block_table.h" />
+    <ClInclude Include="include\ltfec\pipeline\tx_block_assembler.h" />
     <ClInclude Include="include\ltfec\protocol\frame_builder.h" />
+    <ClInclude Include="include\ltfec\sim\loss.h" />
+    <ClInclude Include="include\ltfec\sim\rng.h" />
     <ClInclude Include="include\ltfec\transport\ip.h" />
     <ClInclude Include="include\ltfec\transport\udp_asio.h" />
     <ClInclude Include="include\ltfec\util\crc32c.h" />
     <ClInclude Include="include\ltfec\util\endian.h" />
+    <ClInclude Include="include\ltfec\util\uuid.h" />
     <ClInclude Include="include\ltfec\version.h" />
-    <ClInclude Include="metrics\csv.h" />
     <ClInclude Include="pipeline\block.h" />
     <ClInclude Include="protocol\frame.h" />
     <ClInclude Include="protocol\ids.h" />
@@ -177,8 +181,13 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="src\fec_core\block_xor.cpp" />
+    <ClCompile Include="src\fec_core\gf256.cpp" />
+    <ClCompile Include="src\fec_core\gf256_decode.cpp" />
     <ClCompile Include="src\fec_core\xor_parity.cpp" />
     <ClCompile Include="src\metrics\csv.cpp" />
+    <ClCompile Include="src\pipeline\rx_block_table.cpp" />
+    <ClCompile Include="src\pipeline\tx_block_assembler.cpp" />
     <ClCompile Include="src\transport\udp_asio.cpp" />
     <ClCompile Include="src\util\crc32c.cpp" />
   </ItemGroup>
