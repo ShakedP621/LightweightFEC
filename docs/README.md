@@ -1,4 +1,6 @@
-﻿# LightweightFEC
+﻿[![CI](https://github.com/<OWNER>/<REPO>/actions/workflows/ci.yml/badge.svg)](https://github.com/<OWNER>/<REPO>/actions/workflows/ci.yml)
+[![tag: v0.1.0](https://img.shields.io/badge/tag-v0.1.0-blue.svg)](https://github.com/<OWNER>/<REPO>/releases/tag/v0.1.0)
+# LightweightFEC
 
 Windows x64 C++20 MSVC solution providing low-latency FEC over UDP with a clean, testable design.
 
