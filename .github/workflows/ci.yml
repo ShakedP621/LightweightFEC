@@ -102,6 +102,10 @@ jobs:
         shell: pwsh
         run: msbuild LightweightFEC.sln /m /p:Configuration=Release /p:Platform=x64 /verbosity:minimal
 
+      - name: Run unit tests (Release quick)
+        shell: pwsh
+        run: .\x64\Release\tests.exe --detect_memory_leaks=0
+
       - name: Package Release artifacts
         shell: pwsh
         run: |
