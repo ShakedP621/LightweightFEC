@@ -46,3 +46,6 @@ CMakeSettings.json
 # Ignore runtime metrics CSV folders
 metrics/**
 apps/*/metrics/**
+
+# Ignore nested runtime metrics CSV folders
+apps/**/metrics/**

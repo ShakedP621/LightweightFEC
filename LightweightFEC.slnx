@@ -4,7 +4,10 @@
     <Platform Name="x86" />
   </Configurations>
   <Folder Name="/Solution Items/">
+    <File Path="DESIGN.md" />
     <File Path="props/Common.props" />
+    <File Path="README.md" />
+    <File Path="TEST-MATRIX.md" />
   </Folder>
   <Project Path="apps/f/fec_sender/fec_sender.vcxproj" Id="9ae5d673-0cd7-4d1e-b846-7f7cac6a9202" />
   <Project Path="apps/fec_receiver/fec_receiver.vcxproj" Id="838347a7-fe7c-4dd4-8013-5ff886b513dd" />
