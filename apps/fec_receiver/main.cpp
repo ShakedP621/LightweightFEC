@@ -1,21 +1,27 @@
+// apps/fec_receiver/main.cpp
 #include <iostream>
 #include <string>
 #include <vector>
+#include <optional>
 #include <filesystem>
 #include <chrono>
+#include <cstddef>
 
 #include <boost/program_options.hpp>
-#include <ltfec/metrics/schema.h>
+
 #include <ltfec/version.h>
 #include <ltfec/transport/ip.h>
 #include <ltfec/transport/udp_asio.h>
 #include <ltfec/protocol/frame.h>
 #include <ltfec/protocol/frame_builder.h>
+#include <ltfec/pipeline/rx_block_table.h>
 #include <ltfec/metrics/csv.h>
+#include <ltfec/metrics/schema.h>
 #include <ltfec/util/uuid.h>
 
 using namespace ltfec::transport;
 using namespace ltfec::protocol;
+using namespace ltfec::pipeline;
 namespace po = boost::program_options;
 
 static inline std::uint64_t now_ms() {
@@ -59,7 +65,8 @@ int main(int argc, char** argv) {
 
     Endpoint ep{};
     if (!parse_endpoint(listen_s, ep)) { std::cerr << "error: invalid --listen\n"; return 2; }
-    if (ipv4_is_multicast(ep.addr) && mcast_if.empty()) {
+    const bool is_mcast = ipv4_is_multicast(ep.addr);
+    if (is_mcast && mcast_if.empty()) {
         std::cerr << "error: multicast listen requires --mcast-if\n"; return 2;
     }
 
@@ -78,7 +85,7 @@ int main(int argc, char** argv) {
         std::to_string(ep.port), "0"
         });
 
-    // UDP receive (single datagram)
+    // ---- UDP receive loop until a block closes ----
     ltfec::transport::asio::net::io_context io;
     ltfec::transport::asio::UdpReceiver rx(io);
 
@@ -90,67 +97,87 @@ int main(int argc, char** argv) {
         return 3;
     }
 
-    std::vector<std::byte> buf(4096);
-    std::size_t n = 0;
-    ltfec::transport::asio::udp::endpoint sender_ep;
-    auto ec = rx.recv_once(std::span<std::byte>(buf), n, sender_ep);
-    auto ts1 = now_ms();
+    RxBlockTable rxt({ .reorder_ms = 200, .fps = 30, .max_payload_len = 1300 }); // let 60ms rule dominate
+    std::optional<std::uint32_t> current_gen;
 
-    if (ec) {
-        std::cerr << "recv error: " << ec.message() << "\n";
-        m.add_row({
-            std::to_string(ltfec::metrics::schema_version), run_id,
-            std::to_string(ts1), "receiver", "recv_error",
-            listen_s, std::to_string(ep.port), "0"
-            });
-        m.finish_with_summary(std::string("error: ") + ec.message());
-        std::filesystem::create_directories("metrics");
-        m.save_to_file(std::string("metrics\\receiver_") + run_id + ".csv");
-        return 4;
+    for (;;) {
+        std::vector<std::byte> buf(4096);
+        std::size_t n = 0;
+        ltfec::transport::asio::udp::endpoint sender_ep;
+        auto rc = rx.recv_once(std::span<std::byte>(buf.data(), buf.size()), n, sender_ep);
+        const auto ts = now_ms();
+
+        if (rc) {
+            std::cerr << "recv error: " << rc.message() << "\n";
+            m.add_row({
+                std::to_string(ltfec::metrics::schema_version), run_id,
+                std::to_string(ts), "receiver", "recv_error",
+                listen_s, std::to_string(ep.port), "0"
+                });
+            m.finish_with_summary(std::string("error: ") + rc.message());
+            break;
+        }
+
+        BaseHeader h{}; bool has_parity = false; ParitySubheader ps{};
+        std::span<const std::byte> payload; std::uint32_t crc = 0;
+        const std::span<const std::byte> in(buf.data(), n);
+
+        if (!decode_frame(in, h, has_parity, ps, payload, crc) || !verify_payload_crc(payload, crc)) {
+            std::cerr << "decode/crc error on packet size " << n << "\n";
+            m.add_row({
+                std::to_string(ltfec::metrics::schema_version), run_id,
+                std::to_string(ts), "receiver", "decode_error",
+                listen_s, std::to_string(ep.port), std::to_string(n)
+                });
+            continue;
+        }
+
+        if (!current_gen.has_value()) current_gen = h.fec_gen_id;
+
+        // If a different generation arrives, we could finalize previous; for demo, focus on the first gen.
+        if (h.fec_gen_id != current_gen.value()) {
+            // ignore other gens in this simple demo
+            continue;
+        }
+
+        rxt.ingest(ts, h, has_parity, ps, payload);
+
+        // Print per-frame log (optional)
+        std::cout << "rx " << (has_parity ? "PAR" : "DAT")
+            << " gen=" << h.fec_gen_id
+            << " seq=" << h.seq_in_block << "/" << h.data_count
+            << " K=" << h.parity_count
+            << " payload=" << h.payload_len
+            << " from " << sender_ep.address().to_string() << ":" << sender_ep.port()
+            << "\n";
+
+        if (rxt.should_close(h.fec_gen_id, ts)) {
+            RxClosedBlock closed{};
+            if (rxt.close_if_ready(h.fec_gen_id, ts, closed)) {
+                std::size_t recovered = 0, present = 0;
+                for (std::uint16_t i = 0; i < closed.N; ++i) {
+                    if (!closed.data[i].empty()) ++present;
+                    if (closed.was_recovered[i]) ++recovered;
+                }
+                std::cout << "block CLOSED gen=" << closed.gen
+                    << " N=" << closed.N << " K=" << closed.K
+                    << " payload=" << closed.payload_len
+                    << " present=" << present
+                    << " recovered=" << recovered << "\n";
+
+                m.add_row({
+                    std::to_string(ltfec::metrics::schema_version), run_id,
+                    std::to_string(ts), "receiver", "block_closed",
+                    listen_s, std::to_string(ep.port),
+                    std::to_string(present)
+                    });
+                m.finish_with_summary("ok");
+                break; // done after first block
+            }
+        }
     }
-
-    // Parse the framed packet
-    BaseHeader h{};
-    bool has_parity = false;
-    ParitySubheader ps{};
-    std::span<const std::byte> payload;
-    std::uint32_t crc = 0;
-
-    const std::span<const std::byte> in(buf.data(), n);
-    if (!decode_frame(in, h, has_parity, ps, payload, crc)) {
-        std::cerr << "decode_frame failed (size " << n << ")\n";
-        m.add_row({
-            std::to_string(ltfec::metrics::schema_version), run_id,
-            std::to_string(ts1), "receiver", "decode_error",
-            listen_s, std::to_string(ep.port), std::to_string(n)
-            });
-        m.finish_with_summary("error: decode_frame failed");
-        std::filesystem::create_directories("metrics");
-        m.save_to_file(std::string("metrics\\receiver_") + run_id + ".csv");
-        return 5;
-    }
-
-    const bool crc_ok = verify_payload_crc(payload, crc);
-    std::cout << "received framed " << n << "B from " << sender_ep.address().to_string()
-        << ":" << sender_ep.port()
-        << " | ver=" << (unsigned)h.version
-        << " gen=" << h.fec_gen_id
-        << " seq=" << h.seq_in_block << "/" << h.data_count
-        << " K=" << h.parity_count
-        << " payload=" << h.payload_len
-        << " parity?" << (has_parity ? "Y" : "N")
-        << " crc=" << (crc_ok ? "ok" : "BAD")
-        << "\n";
-
-    m.add_row({
-    std::to_string(ltfec::metrics::schema_version), run_id,
-    std::to_string(ts1), "receiver", (crc_ok ? "received_ok" : "received_badcrc"),
-    listen_s, std::to_string(ep.port), std::to_string(n)
-        });
-
-    m.finish_with_summary(crc_ok ? "ok" : "badcrc");
 
     std::filesystem::create_directories("metrics");
     m.save_to_file(std::string("metrics\\receiver_") + run_id + ".csv");
-    return crc_ok ? 0 : 6;
+    return 0;
 }
