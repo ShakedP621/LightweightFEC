@@ -1,4 +1,4 @@
-﻿# LightweightFEC — DESIGN (Source of Truth)
+﻿# LightweightFEC — DESIGN 
 
 This document is the **locked design** used by code, tests, and CI. Any change requires bumping `schema_version` (metrics) and corresponding updates.
 
