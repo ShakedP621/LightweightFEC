@@ -30,14 +30,14 @@ static inline std::uint64_t now_ms() {
     return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
 }
 
-static std::vector<std::byte> make_payload(std::string src, std::size_t L, std::uint16_t idx) {
+static std::vector<std::byte> make_payload(std::string src, std::size_t L, std::uint32_t block_idx, std::uint16_t idx) {
     if (L == 0) return {};
     if (src.empty()) src = "x";
     std::vector<std::byte> out(L);
     for (size_t i = 0; i < L; ++i) {
         unsigned char ch = static_cast<unsigned char>(src[i % src.size()]);
-        // vary by index a little so frames differ
-        out[i] = std::byte{ static_cast<unsigned char>(ch ^ static_cast<unsigned char>((idx * 17u + i) & 0xFF)) };
+        unsigned char salt = static_cast<unsigned char>((block_idx * 31u + idx * 17u + i) & 0xFF);
+        out[i] = std::byte{ static_cast<unsigned char>(ch ^ salt) };
     }
     return out;
 }
@@ -50,6 +50,8 @@ int main(int argc, char** argv) {
     int K = 1;
     int payload_len_cli = -1;
     int fps = 30;
+    int blocks = 1;
+    int inter_block_ms = 0;
 
     po::options_description desc("Options");
     desc.add_options()
@@ -63,7 +65,9 @@ int main(int argc, char** argv) {
         ("payload-len", po::value<int>(&payload_len_cli)->default_value(-1), "Payload length in bytes; if <0, use --msg length")
         ("N", po::value<int>(&N)->default_value(8), "Data frames per block")
         ("K", po::value<int>(&K)->default_value(1), "Parity frames per block (1=XOR, 2..4=GF(256))")
-        ("fps", po::value<int>(&fps)->default_value(30), "Optional pacing for data frames (frames/second)")
+        ("fps", po::value<int>(&fps)->default_value(30), "Pace data frames at FPS (>=1)")
+        ("blocks", po::value<int>(&blocks)->default_value(1), "Number of blocks to send")
+        ("inter-block-ms", po::value<int>(&inter_block_ms)->default_value(0), "Sleep between blocks (ms)")
         ;
 
     po::variables_map vm;
@@ -93,6 +97,8 @@ int main(int argc, char** argv) {
         return 2;
     }
     if (fps <= 0) fps = 30;
+    if (blocks <= 0) blocks = 1;
+    if (inter_block_ms < 0) inter_block_ms = 0;
 
     Endpoint ep{};
     if (!parse_endpoint(dest_s, ep)) {
@@ -119,34 +125,11 @@ int main(int argc, char** argv) {
         mloop = (loop_opt != 0);
     }
 
-    // ----- Build one block (N data + K parity) -----
-    const std::size_t payload_len = (payload_len_cli >= 0) ? static_cast<std::size_t>(payload_len_cli)
-        : static_cast<std::size_t>(msg.size());
-    TxConfig txc{ .N = static_cast<std::uint16_t>(N),
-                  .K = static_cast<std::uint16_t>(K),
-                  .max_payload_len = 1300 };
-    TxBlockAssembler tx(txc, /*gen_seed*/ static_cast<std::uint32_t>(now_ms() & 0xFFFFFFFFu));
-
-    std::vector<std::vector<std::byte>> data_bytes(N);
-    std::vector<std::span<const std::byte>> data_spans; data_spans.reserve(N);
-    for (int i = 0; i < N; ++i) {
-        data_bytes[i] = make_payload(msg, payload_len, static_cast<std::uint16_t>(i));
-        data_spans.emplace_back(data_bytes[i].data(), data_bytes[i].size());
-    }
-
-    std::vector<std::vector<std::byte>> frames;
-    if (!tx.assemble_block(data_spans, frames)) {
-        std::cerr << "assemble_block failed\n";
-        return 3;
-    }
-    const std::uint32_t gen = tx.peek_next_gen() - 1;
-
     // ---- Metrics (standard schema) ----
     ltfec::metrics::CsvWriter m(1);
     const auto run_id = ltfec::util::uuid_v4();
     m.set_run_uuid(run_id);
     m.set_header(ltfec::metrics::standard_header());
-
     auto ts0 = now_ms();
     m.add_row({
         std::to_string(ltfec::metrics::schema_version), run_id,
@@ -156,7 +139,7 @@ int main(int argc, char** argv) {
         std::to_string(ep.port), "0"
         });
 
-    // ---- UDP send ----
+    // ---- UDP open ----
     ltfec::transport::asio::net::io_context io;
     ltfec::transport::asio::UdpSender sender(io);
     if (auto ec = sender.open_and_configure(ep, mcast_if, mttl, mloop); ec) {
@@ -168,42 +151,72 @@ int main(int argc, char** argv) {
     }
 
     const int dt_ms = std::max(1, 1000 / fps);
-    std::size_t total_sent = 0;
+    std::size_t total_sent_bytes = 0;
+    std::uint32_t total_sent_frames = 0;
 
-    for (size_t i = 0; i < frames.size(); ++i) {
-        std::size_t n = 0;
-        auto ec = sender.send(std::span<const std::byte>(frames[i].data(), frames[i].size()), n);
-        auto ts = now_ms();
-        total_sent += n;
+    TxConfig txc{ .N = static_cast<std::uint16_t>(N),
+                  .K = static_cast<std::uint16_t>(K),
+                  .max_payload_len = 1300 };
+    TxBlockAssembler tx(txc, /*gen_seed*/ static_cast<std::uint32_t>(now_ms() & 0xFFFFFFFFu));
 
-        if (ec) {
-            std::cerr << "send error on frame " << i << ": " << ec.message() << "\n";
-            m.add_row({
-                std::to_string(ltfec::metrics::schema_version), run_id,
-                std::to_string(ts), "sender", "send_error",
-                dest_s, std::to_string(ep.port), std::to_string(n)
-                });
-            m.finish_with_summary(std::string("error: ") + ec.message());
+    for (int b = 0; b < blocks; ++b) {
+        // Build one block
+        const std::size_t payload_len = (payload_len_cli >= 0) ? static_cast<std::size_t>(payload_len_cli)
+            : static_cast<std::size_t>(msg.size());
+        std::vector<std::vector<std::byte>> data_bytes(N);
+        std::vector<std::span<const std::byte>> data_spans; data_spans.reserve(N);
+        for (int i = 0; i < N; ++i) {
+            data_bytes[i] = make_payload(msg, payload_len, static_cast<std::uint32_t>(b), static_cast<std::uint16_t>(i));
+            data_spans.emplace_back(data_bytes[i].data(), data_bytes[i].size());
+        }
+
+        std::vector<std::vector<std::byte>> frames;
+        if (!tx.assemble_block(data_spans, frames)) {
+            std::cerr << "assemble_block failed (block " << b << ")\n";
             break;
         }
-        else {
-            m.add_row({
-                std::to_string(ltfec::metrics::schema_version), run_id,
-                std::to_string(ts), "sender", (i < static_cast<size_t>(N) ? "sent_data" : "sent_parity"),
-                dest_s, std::to_string(ep.port), std::to_string(n)
-                });
+        const std::uint32_t gen = tx.peek_next_gen() - 1;
+
+        // Send all frames in this block
+        for (size_t i = 0; i < frames.size(); ++i) {
+            std::size_t n = 0;
+            auto ec = sender.send(std::span<const std::byte>(frames[i].data(), frames[i].size()), n);
+            auto ts = now_ms();
+            total_sent_bytes += n;
+            ++total_sent_frames;
+
+            if (ec) {
+                std::cerr << "send error on frame " << i << " (block " << b << "): " << ec.message() << "\n";
+                m.add_row({
+                    std::to_string(ltfec::metrics::schema_version), run_id,
+                    std::to_string(ts), "sender", "send_error",
+                    dest_s, std::to_string(ep.port), std::to_string(n)
+                    });
+                m.finish_with_summary(std::string("error: ") + ec.message());
+                goto finish;
+            }
+            else {
+                m.add_row({
+                    std::to_string(ltfec::metrics::schema_version), run_id,
+                    std::to_string(ts), "sender", (i < static_cast<size_t>(N) ? "sent_data" : "sent_parity"),
+                    dest_s, std::to_string(ep.port), std::to_string(n)
+                    });
+            }
+
+            // Pace between data frames
+            if (i + 1 < static_cast<size_t>(N))
+                std::this_thread::sleep_for(std::chrono::milliseconds(dt_ms));
         }
 
-        // Pace only between DATA frames to roughly simulate fps
-        if (i + 1 < static_cast<size_t>(N))
-            std::this_thread::sleep_for(std::chrono::milliseconds(dt_ms));
+        std::cout << "sent block gen=" << gen << " (b=" << b << ") N=" << N << " K=" << K
+            << " frames=" << frames.size() << "\n";
+
+        if (inter_block_ms > 0)
+            std::this_thread::sleep_for(std::chrono::milliseconds(inter_block_ms));
     }
 
-    std::cout << "sent block gen=" << gen << " with N=" << N << " K=" << K
-        << " (payload=" << payload_len << "B each, frames=" << frames.size()
-        << ", total=" << total_sent << "B)"
-        << (dest_is_mcast ? " [multicast]" : "") << "\n";
-
+finish:
+    std::cout << "send complete: frames=" << total_sent_frames << " bytes=" << total_sent_bytes << "\n";
     m.finish_with_summary("ok");
     std::filesystem::create_directories("metrics");
     m.save_to_file(std::string("metrics\\sender_") + run_id + ".csv");

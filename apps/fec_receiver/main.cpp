@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <optional>
+#include <unordered_map>
 #include <filesystem>
 #include <chrono>
 #include <cstddef>
@@ -32,13 +33,20 @@ static inline std::uint64_t now_ms() {
 int main(int argc, char** argv) {
     std::string listen_s;
     std::string mcast_if;
+    int expect_blocks = 1;
+    int reorder_ms = 200;
+    int fps = 30;
 
     po::options_description desc("Options");
     desc.add_options()
         ("help,h", "Show help")
         ("version,v", "Show version")
         ("listen", po::value<std::string>(&listen_s), "Listen <ip:port> (required)")
-        ("mcast-if", po::value<std::string>(&mcast_if)->default_value(""), "Multicast interface IPv4 (required when listen is multicast)");
+        ("mcast-if", po::value<std::string>(&mcast_if)->default_value(""), "Multicast interface IPv4 (required for multicast)")
+        ("expect-blocks", po::value<int>(&expect_blocks)->default_value(1), "Stop after closing this many blocks")
+        ("reorder-ms", po::value<int>(&reorder_ms)->default_value(200), "Reorder window ms (>=50; 200 makes 60ms rule dominate)")
+        ("fps", po::value<int>(&fps)->default_value(30), "Sender FPS hint (affects close rule 2×span)")
+        ;
 
     po::variables_map vm;
     try {
@@ -62,6 +70,9 @@ int main(int argc, char** argv) {
         std::cerr << "error: --listen is required\n\n" << desc << "\n";
         return 2;
     }
+    if (expect_blocks <= 0) expect_blocks = 1;
+    if (reorder_ms < 50) reorder_ms = 50;
+    if (fps <= 0) fps = 30;
 
     Endpoint ep{};
     if (!parse_endpoint(listen_s, ep)) { std::cerr << "error: invalid --listen\n"; return 2; }
@@ -75,7 +86,6 @@ int main(int argc, char** argv) {
     const auto run_id = ltfec::util::uuid_v4();
     m.set_run_uuid(run_id);
     m.set_header(ltfec::metrics::standard_header());
-
     auto ts0 = now_ms();
     m.add_row({
         std::to_string(ltfec::metrics::schema_version), run_id,
@@ -85,7 +95,7 @@ int main(int argc, char** argv) {
         std::to_string(ep.port), "0"
         });
 
-    // ---- UDP receive loop until a block closes ----
+    // ---- UDP receive loop (multi-block) ----
     ltfec::transport::asio::net::io_context io;
     ltfec::transport::asio::UdpReceiver rx(io);
 
@@ -97,8 +107,13 @@ int main(int argc, char** argv) {
         return 3;
     }
 
-    RxBlockTable rxt({ .reorder_ms = 200, .fps = 30, .max_payload_len = 1300 }); // let 60ms rule dominate
-    std::optional<std::uint32_t> current_gen;
+    RxBlockTable rxt({ .reorder_ms = static_cast<std::uint32_t>(reorder_ms),
+                       .fps = static_cast<std::uint16_t>(fps),
+                       .max_payload_len = 1300 });
+
+    // Track gens so we can close multiple blocks
+    int closed_blocks = 0;
+    std::unordered_map<std::uint32_t, std::uint64_t> last_seen_ms;
 
     for (;;) {
         std::vector<std::byte> buf(4096);
@@ -132,17 +147,10 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        if (!current_gen.has_value()) current_gen = h.fec_gen_id;
-
-        // If a different generation arrives, we could finalize previous; for demo, focus on the first gen.
-        if (h.fec_gen_id != current_gen.value()) {
-            // ignore other gens in this simple demo
-            continue;
-        }
-
         rxt.ingest(ts, h, has_parity, ps, payload);
+        last_seen_ms[h.fec_gen_id] = ts;
 
-        // Print per-frame log (optional)
+        // Optional per-frame log
         std::cout << "rx " << (has_parity ? "PAR" : "DAT")
             << " gen=" << h.fec_gen_id
             << " seq=" << h.seq_in_block << "/" << h.data_count
@@ -151,32 +159,49 @@ int main(int argc, char** argv) {
             << " from " << sender_ep.address().to_string() << ":" << sender_ep.port()
             << "\n";
 
-        if (rxt.should_close(h.fec_gen_id, ts)) {
-            RxClosedBlock closed{};
-            if (rxt.close_if_ready(h.fec_gen_id, ts, closed)) {
-                std::size_t recovered = 0, present = 0;
-                for (std::uint16_t i = 0; i < closed.N; ++i) {
-                    if (!closed.data[i].empty()) ++present;
-                    if (closed.was_recovered[i]) ++recovered;
-                }
-                std::cout << "block CLOSED gen=" << closed.gen
-                    << " N=" << closed.N << " K=" << closed.K
-                    << " payload=" << closed.payload_len
-                    << " present=" << present
-                    << " recovered=" << recovered << "\n";
+        // Try to close any gens that are ready (including this one)
+        for (auto it = last_seen_ms.begin(); it != last_seen_ms.end(); /*in-loop*/) {
+            const auto gen = it->first;
+            const auto tlast = it->second;
+            bool erased = false;
 
-                m.add_row({
-                    std::to_string(ltfec::metrics::schema_version), run_id,
-                    std::to_string(ts), "receiver", "block_closed",
-                    listen_s, std::to_string(ep.port),
-                    std::to_string(present)
-                    });
-                m.finish_with_summary("ok");
-                break; // done after first block
+            if (rxt.should_close(gen, ts)) {
+                RxClosedBlock closed{};
+                if (rxt.close_if_ready(gen, ts, closed)) {
+                    std::size_t recovered = 0, present = 0;
+                    for (std::uint16_t i = 0; i < closed.N; ++i) {
+                        if (!closed.data[i].empty()) ++present;
+                        if (closed.was_recovered[i]) ++recovered;
+                    }
+                    std::cout << "block CLOSED gen=" << closed.gen
+                        << " N=" << closed.N << " K=" << closed.K
+                        << " payload=" << closed.payload_len
+                        << " present=" << present
+                        << " recovered=" << recovered << "\n";
+
+                    m.add_row({
+                        std::to_string(ltfec::metrics::schema_version), run_id,
+                        std::to_string(ts), "receiver", "block_closed",
+                        listen_s, std::to_string(ep.port),
+                        std::to_string(present)
+                        });
+
+                    it = last_seen_ms.erase(it);
+                    erased = true;
+                    ++closed_blocks;
+                    if (closed_blocks >= expect_blocks) {
+                        m.finish_with_summary("ok");
+                        goto end;
+                    }
+                }
             }
+
+            if (!erased) ++it;
+            (void)tlast; // reserved for future timeouts logic
         }
     }
 
+end:
     std::filesystem::create_directories("metrics");
     m.save_to_file(std::string("metrics\\receiver_") + run_id + ".csv");
     return 0;
