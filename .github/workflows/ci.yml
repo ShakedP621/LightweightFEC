@@ -77,6 +77,48 @@ jobs:
         shell: pwsh
         run: .\x64\Debug\tests.exe --detect_memory_leaks=0
 
+      - name: Package Debug artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifact\Debug | Out-Null
+          Copy-Item -Force x64\Debug\fec_sender.exe        artifact\Debug\
+          Copy-Item -Force x64\Debug\fec_sender.pdb        artifact\Debug\ -ErrorAction SilentlyContinue
+          Copy-Item -Force x64\Debug\fec_receiver.exe      artifact\Debug\
+          Copy-Item -Force x64\Debug\fec_receiver.pdb      artifact\Debug\ -ErrorAction SilentlyContinue
+          Copy-Item -Force x64\Debug\tests.exe             artifact\Debug\
+          Copy-Item -Force x64\Debug\tests.pdb             artifact\Debug\ -ErrorAction SilentlyContinue
+          # Copy Debug Boost DLL (contains '-gd-')
+          $dll = Get-ChildItem "$env:BOOST_LIBRARYDIR\boost_program_options*-gd-*.dll" | Select-Object -First 1
+          if ($dll) { Copy-Item -Force $dll.FullName artifact\Debug\ }
+          Compress-Archive -Path artifact\Debug\* -DestinationPath artifact\LightweightFEC-Debug.zip -Force
+
+      - name: Upload Debug artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LightweightFEC-Debug
+          path: artifact/LightweightFEC-Debug.zip
+
       - name: Build (Release x64)
         shell: pwsh
         run: msbuild LightweightFEC.sln /m /p:Configuration=Release /p:Platform=x64 /verbosity:minimal
+
+      - name: Package Release artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifact\Release | Out-Null
+          Copy-Item -Force x64\Release\fec_sender.exe        artifact\Release\
+          Copy-Item -Force x64\Release\fec_sender.pdb        artifact\Release\ -ErrorAction SilentlyContinue
+          Copy-Item -Force x64\Release\fec_receiver.exe      artifact\Release\
+          Copy-Item -Force x64\Release\fec_receiver.pdb      artifact\Release\ -ErrorAction SilentlyContinue
+          Copy-Item -Force x64\Release\tests.exe             artifact\Release\
+          Copy-Item -Force x64\Release\tests.pdb             artifact\Release\ -ErrorAction SilentlyContinue
+          # Copy Release Boost DLL (no '-gd-')
+          $dll = Get-ChildItem "$env:BOOST_LIBRARYDIR\boost_program_options*-x64-*.dll" | Where-Object { $_.Name -notmatch '-gd-' } | Select-Object -First 1
+          if ($dll) { Copy-Item -Force $dll.FullName artifact\Release\ }
+          Compress-Archive -Path artifact\Release\* -DestinationPath artifact\LightweightFEC-Release.zip -Force
+
+      - name: Upload Release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LightweightFEC-Release
+          path: artifact/LightweightFEC-Release.zip
