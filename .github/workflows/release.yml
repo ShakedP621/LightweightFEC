@@ -1,0 +1,114 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    env:
+      BOOST_VERSION: 1_89_0
+      BOOST_DIR: ${{ github.workspace }}\boost_1_89_0
+      BOOST_INCLUDEDIR: ${{ github.workspace }}\boost_1_89_0
+      BOOST_LIBRARYDIR: ${{ github.workspace }}\boost_1_89_0\stage\lib
+      DISABLE_MULTICAST_TESTS: 1
+      LTFEC_ACCEPT_FULL: 0
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Cache Boost (source + built libs)
+        id: boost-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.BOOST_DIR }}
+          key: boost-${{ env.BOOST_VERSION }}-msvc143-shared
+
+      - name: Download Boost ${{ env.BOOST_VERSION }} (if not cached)
+        if: steps.boost-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Invoke-WebRequest -Uri https://archives.boost.io/release/1.89.0/source/boost_1_89_0.zip -OutFile boost.zip
+          Expand-Archive boost.zip -DestinationPath .
+          Remove-Item boost.zip
+
+      - name: Build Boost.Program_options (debug+release, x64, shared)
+        if: steps.boost-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          cd boost_1_89_0
+          cmd /c bootstrap.bat
+          .\b2 --with-program_options toolset=msvc address-model=64 runtime-link=shared link=shared variant=debug,release stage
+
+      - name: Create C:\dev\Boost.props for this runner
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force C:\dev | Out-Null
+          @"
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(BOOST_INCLUDEDIR);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(BOOST_LIBRARYDIR);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+  </ItemDefinitionGroup>
+</Project>
+"@ | Out-File -FilePath C:\dev\Boost.props -Encoding utf8
+
+      - name: Build (Debug x64)
+        shell: pwsh
+        run: msbuild LightweightFEC.sln /m /p:Configuration=Debug /p:Platform=x64 /verbosity:minimal
+
+      - name: Run unit tests (Debug quick)
+        shell: pwsh
+        run: .\x64\Debug\tests.exe --detect_memory_leaks=0
+
+      - name: Build (Release x64)
+        shell: pwsh
+        run: msbuild LightweightFEC.sln /m /p:Configuration=Release /p:Platform=x64 /verbosity:minimal
+
+      - name: Package Debug artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifact\Debug | Out-Null
+          Copy-Item -Force x64\Debug\fec_sender.exe        artifact\Debug\
+          Copy-Item -Force x64\Debug\fec_receiver.exe      artifact\Debug\
+          Copy-Item -Force x64\Debug\tests.exe             artifact\Debug\
+          $dll = Get-ChildItem "$env:BOOST_LIBRARYDIR\boost_program_options*-gd-*.dll" | Select-Object -First 1
+          if ($dll) { Copy-Item -Force $dll.FullName artifact\Debug\ }
+          Compress-Archive -Path artifact\Debug\* -DestinationPath artifact\LightweightFEC-Debug.zip -Force
+
+      - name: Package Release artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifact\Release | Out-Null
+          Copy-Item -Force x64\Release\fec_sender.exe        artifact\Release\
+          Copy-Item -Force x64\Release\fec_receiver.exe      artifact\Release\
+          Copy-Item -Force x64\Release\tests.exe             artifact\Release\
+          $dll = Get-ChildItem "$env:BOOST_LIBRARYDIR\boost_program_options*-x64-*.dll" | Where-Object { $_.Name -notmatch '-gd-' } | Select-Object -First 1
+          if ($dll) { Copy-Item -Force $dll.FullName artifact\Release\ }
+          Compress-Archive -Path artifact\Release\* -DestinationPath artifact\LightweightFEC-Release.zip -Force
+
+      - name: Create GitHub Release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ github.ref_name }}
+          files: |
+            artifact/LightweightFEC-Debug.zip
+            artifact/LightweightFEC-Release.zip
+          draft: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
